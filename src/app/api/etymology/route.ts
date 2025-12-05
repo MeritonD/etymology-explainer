@@ -3,6 +3,9 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { streamObject } from 'ai';
 import { etymologySchema } from '@/lib/etymology-schema';
 
+import { checkRateLimit } from '@/lib/ratelimit';
+import { headers } from 'next/headers';
+
 export const maxDuration = 60;
 
 const google = createGoogleGenerativeAI({
@@ -11,6 +14,14 @@ const google = createGoogleGenerativeAI({
 
 export async function POST(req: Request) {
     const { word, era } = await req.json();
+
+    // Rate Limiting
+    const ip = (await headers()).get("x-forwarded-for") ?? "127.0.0.1";
+    const { success } = await checkRateLimit(ip);
+
+    if (!success) {
+        return new Response("Too Many Requests", { status: 429 });
+    }
 
     if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
         throw new Error('GOOGLE_GENERATIVE_AI_API_KEY is not set');
