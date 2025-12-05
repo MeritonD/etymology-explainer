@@ -4,6 +4,8 @@ import { streamObject } from 'ai';
 import { etymologySchema } from '@/lib/etymology-schema';
 
 import { checkRateLimit } from '@/lib/ratelimit';
+import { db } from '@/lib/db';
+import { cachedEtymologies } from '@/db/schema';
 import { headers } from 'next/headers';
 
 export const maxDuration = 60;
@@ -29,6 +31,25 @@ export async function POST(req: Request) {
 
     console.log(`Processing etymology for: ${word} in era: ${era}`);
 
+    // 1. Check Cache
+    try {
+        const cached = await db.query.cachedEtymologies.findFirst({
+            where: (table, { and, eq }) => and(eq(table.word, word), eq(table.era, era)),
+        });
+
+        if (cached) {
+            console.log('CACHE HIT');
+            return Response.json(cached.content, {
+                headers: { 'X-Cache': 'HIT' }
+            });
+        }
+    } catch (e) {
+        console.error('Cache Check Failed:', e);
+        // Continue to generate on cache error
+    }
+
+    console.log('CACHE MISS - Generating');
+
     try {
         const result = await streamObject({
             model: google('gemini-2.5-flash'),
@@ -40,9 +61,30 @@ export async function POST(req: Request) {
         CRITICAL: For the 'timeCapsule', you must provide a sentence that uses the word "${word}" AS IT WAS UNDERSTOOD in the '${era}'.
         If the word did not exist, explain the closest equivalent or its root.
         Contrast the meaning if it has changed significantly (e.g. gay: happy vs homosexual).`,
+            onFinish: async ({ object }) => {
+                if (object) {
+                    try {
+                        await db.insert(cachedEtymologies).values({
+                            word,
+                            era,
+                            content: object,
+                        }).onConflictDoUpdate({
+                            target: [cachedEtymologies.word, cachedEtymologies.era],
+                            set: { content: object, createdAt: new Date() }
+                        });
+                        console.log('Saved to Cache');
+                    } catch (err) {
+                        console.error('Failed to save to cache:', err);
+                    }
+                }
+            }
         });
 
-        return result.toTextStreamResponse();
+        // Add Miss Header to the stream response
+        const response = result.toTextStreamResponse();
+        response.headers.set('X-Cache', 'MISS');
+        return response;
+
     } catch (e) {
         console.error('Etymology API Error:', e);
         return new Response('Error generating etymology', { status: 500 });

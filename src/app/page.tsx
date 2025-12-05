@@ -6,6 +6,8 @@ type Props = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>
 }
 
+import { getBaseUrl } from '@/lib/url-utils';
+
 export async function generateMetadata(
   { searchParams }: Props
 ): Promise<Metadata> {
@@ -21,7 +23,7 @@ export async function generateMetadata(
   }
 
   // Use the OG Image Route
-  const ogUrl = new URL('http://localhost:3000/api/og');
+  const ogUrl = new URL(`${getBaseUrl()}/api/og`);
   ogUrl.searchParams.set('word', word);
   ogUrl.searchParams.set('era', era);
 
